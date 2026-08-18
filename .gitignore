@@ -23,3 +23,6 @@ cordis.yml
 .idea/
 .DS_Store
 Thumbs.db
+
+# AI agent scratch / throwaway test harnesses
+scratch-test/

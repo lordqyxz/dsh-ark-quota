@@ -14,7 +14,7 @@
 
 ## 功能特性
 
-- **侧边栏固定小组件**：侧边栏底部操作区显示宽版卡片（会话 / 本周 / 本月三条用量进度），窄版显示本月剩余百分比胶囊。
+- **侧边栏固定小组件**：侧边栏底部操作区显示宽版卡片（5小时 / 近1周 / 近1月三条用量进度，可切换显示已用或剩余百分比），窄版显示近1月百分比胶囊。悬停任意一行可查看精确百分比、绝对用量（如有）与精确重置时刻。
 - **Agent Plan 自动回落**：账号未订阅 Coding Plan 时，代理自动探测 `GetAFPUsage` 并渲染绝对额度窗口。
 - **免重启维护**：密钥从 `ark-quota` 设置命名空间读取（`$DSH_HOME/settings.yaml`，由 `dsh-settings-file` 热重载）。任何变更立即清空缓存——**无需重启服务**。
 - **设置界面配置**：DSH 设置 → **方舟额度** 顶级分区（与「侧边卡片」「配置同步」同级），一键保存 AK/SK（只写字段、热生效）。
@@ -73,7 +73,7 @@
 
 ## 使用
 
-- 小组件按 `refreshMs`（默认 5 分钟）轮询 `/ark-quota`，并在设置命名空间变更时立即刷新。
+- 小组件按 `refreshMs`（默认 5 分钟，可在"设置 → 方舟额度"里改为 1/5/10/30 分钟或 1 小时）自适应轮询 `/ark-quota`，并在设置命名空间变更时立即刷新。
 - 点击 **⟳** 按钮（或访问 `/ark-quota?force=1`）可强制立即刷新。
 - 密钥缺失或错误时显示错误卡片；在 **设置 → 方舟额度** 里修正（或重跑 `node tools/check.mjs`），组件会自动更新。
 
@@ -109,7 +109,7 @@
 
 ## 安全说明
 
-- `/ark-quota`、`/ark-quota/status`、`/ark-quota/credentials` 三个路由**仅限本机**（绑定在 DSH 服务上）且**无鉴权**：同一台机器上的任何进程都能读取你的额度数据、触发一次带鉴权的刷新，或通过 `POST /ark-quota/credentials` 覆盖你的访问密钥（影响面等同本机可直接读写 `settings.yaml`）。但它们**绝不会回显你的访问密钥**（响应只含布尔状态 / 额度数字），`/ark-quota/credentials` 只接受固定形状的 `accessKeyId` / `secretAccessKey` 两个字符串字段、不接受任何用户可控的 URL，因此无法作为代理/SSRF 跳板或泄漏火山凭据。插件加载期间请勿将 DSH 服务暴露到非回环地址。
+- `/ark-quota`、`/ark-quota/status`、`/ark-quota/credentials`、`/ark-quota/settings` 四个路由**仅限本机**（绑定在 DSH 服务上）且**无鉴权**：同一台机器上的任何进程都能读取你的额度数据、触发一次带鉴权的刷新、通过 `POST /ark-quota/credentials` 覆盖访问密钥，或通过 `POST /ark-quota/settings` 修改轮询间隔（影响面等同本机可直接读写 `settings.yaml`）。但它们**绝不会回显你的访问密钥**（响应只含布尔状态 / 额度数字）；`/ark-quota/credentials` 只接受固定形状的 `accessKeyId` / `secretAccessKey` 字段，`/ark-quota/settings` 只接受固定白名单中的 `refreshMs` 数值，都不接受任何用户可控的 URL，因此无法作为代理/SSRF 跳板或泄漏火山凭据。插件加载期间请勿将 DSH 服务暴露到非回环地址。
 - 访问密钥是真实凭据，存放于 `$DSH_HOME` 下的 `cordis.patch.yml` / `settings.yaml`；在设置 schema 中以 `role('secret')` 声明（DSH 设置界面以只写字段展示、绝不把值回传浏览器），并**已被 git 排除**（见 `.gitignore`）。
 - `tools/check.mjs` 只用命令行 / `ARK_AK` / `ARK_SK` 传入的密钥签名一次请求，**不写盘、不全量打印**。
 

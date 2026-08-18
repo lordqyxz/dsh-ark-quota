@@ -14,7 +14,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) (DSH) web 
 
 ## Features
 
-- Sidebar footer widget: wide card (session / weekly / monthly usage bars) on the footer action row, or a compact remaining-percent pill.
+- Sidebar footer widget: wide card (5-hour / weekly / monthly usage bars, switchable between used % and remaining %) on the footer action row, or a compact pill. Hover any row for precise percentages, absolute counts (when returned by the API), and the exact wall-clock reset time.
 - Agent Plan fallback: when the account is not subscribed to Coding Plan, the proxy auto-detects `GetAFPUsage` and renders the absolute quota windows instead.
 - Live maintenance: keys are read from the `ark-quota` settings namespace (`$DSH_HOME/settings.yaml`, hot-reloaded by `dsh-settings-file`). A change drops the cache immediately — **no server restart**.
 - Settings UI: a top-level **方舟额度** section in the DSH settings (sibling of the 侧边卡片 / 配置同步 sections) saves AK/SK with one click (write-only fields, hot-applied).
@@ -86,7 +86,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) (DSH) web 
 
 ## Usage
 
-- The widget polls `/ark-quota` every `refreshMs` (default 5 min) and every time the settings namespace changes.
+- The widget adaptively polls `/ark-quota` at `refreshMs` (default 5 min; change it in Settings → 方舟额度 to 1/5/10/30 min or 1 hour), and immediately refreshes whenever the settings namespace changes.
 - Click the **⟳** button (or `?force=1`) for an immediate refetch.
 - When the keys are missing or wrong you'll see an error card; fix them in Settings → 方舟额度 (or re-run `node tools/check.mjs`) and the widget updates itself.
 
@@ -122,7 +122,7 @@ On failure: `{ "ok": false, "code": "unauthorized" | "upstream" | "network", "me
 
 ## Security notes
 
-- The `/ark-quota`, `/ark-quota/status`, and `/ark-quota/credentials` routes are **localhost-only** (bound to the DSH server) and are **unauthenticated**: any process on the same machine can read your quota figures, force an authenticated refresh, or overwrite your access keys via `POST /ark-quota/credentials` (the same exposure as directly editing `settings.yaml` on that machine). They **never echo your access keys** (responses carry only booleans / quota numbers), and `/ark-quota/credentials` accepts only a fixed-shape `accessKeyId` / `secretAccessKey` pair of strings — no user-controlled URL, so they cannot be used as a proxy/SSRF vector or leak the Volcengine credentials. Don't expose the DSH server beyond loopback while this plugin is loaded.
+- The `/ark-quota`, `/ark-quota/status`, `/ark-quota/credentials`, and `/ark-quota/settings` routes are **localhost-only** (bound to the DSH server) and are **unauthenticated**: any process on the same machine can read your quota figures, force an authenticated refresh, overwrite your access keys via `POST /ark-quota/credentials`, or change the `refreshMs` polling cadence via `POST /ark-quota/settings` (the same exposure as directly editing `settings.yaml` on that machine). They **never echo your access keys** (responses carry only booleans / quota numbers); `/ark-quota/credentials` accepts only a fixed-shape `accessKeyId` / `secretAccessKey` pair of strings, and `/ark-quota/settings` accepts only `refreshMs` from a fixed allowlist — no user-controlled URL, so they cannot be used as a proxy/SSRF vector or leak the Volcengine credentials. Don't expose the DSH server beyond loopback while this plugin is loaded.
 - Access keys are real credentials. They are stored in `cordis.patch.yml` / `settings.yaml` under `$DSH_HOME`, declared with `role('secret')` in the settings schema (the DSH settings UI shows them as write-only fields and never sends their values back to the browser), and are **excluded from git** (see `.gitignore`).
 - `tools/check.mjs` only signs one request with the keys you pass on the command line / via `ARK_AK`/`ARK_SK`; it never writes them to disk and never prints them in full.
 
