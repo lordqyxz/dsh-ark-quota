@@ -36,6 +36,7 @@ globalThis.document = dom.window.document;
 
 // ── mock fetch ───────────────────────────────────────────────
 const calls = [];
+const postRequests = [];
 const nowSec = Math.floor(Date.now() / 1000);
 const accounts = [
   { id: "company", label: "公司号", configured: true, providers: ["ark-coding-plan-company"] },
@@ -44,8 +45,15 @@ const accounts = [
 // 路由维度视图：已绑定凭据的路由（侧栏切换器与设置页的权威身份）。
 const routes = [
   { route: "ark-coding-plan", name: "火山Coding Plan", accountId: "personal", accountLabel: "个人号", configured: true, monthlyPct: 23 },
-  { route: "ark-coding-plan-company", name: "火山Agent Plan", accountId: "company", accountLabel: "公司号", configured: true, monthlyPct: 90 }
+  { route: "ark-coding-plan-company", name: "火山Agent Plan", accountId: "company", accountLabel: "公司号", configured: true, monthlyPct: 70 }
 ];
+const extraRoutes = [
+  { route: "ark-coding-plan-team", name: "火山Team Plan", accountId: "team", accountLabel: "团队号", configured: true, monthlyPct: 41 },
+  { route: "ark-coding-plan-lab", name: "火山Lab Plan", accountId: "lab", accountLabel: "实验号", configured: true, monthlyPct: 52 }
+];
+let manyRoutes = false;
+const quotaRoutes = () => manyRoutes ? routes.concat(extraRoutes) : routes;
+const unconfiguredProvider = { id: "ark-unconfigured", name: "火山未配置" };
 const quotaBase = {
       ok: true, plan: "coding-plan", refreshMs: 300000, cachedAt: Date.now(),
       accountId: "personal", accounts, routes, pinnedRoute: "", hasReward: true,
@@ -67,9 +75,9 @@ const quotaBase = {
         },
         weekly: {
           // 平均节奏投影 140%；近期样本充足（8 个）→ forecast 走近期口径 200%，
-          // 按近期速度 12 小时后用完（比重置早）
+          // 按近期速度 30 分钟后用完（比重置早）
           perDay: 40, budgetPerDay: 14.3, ratio: 2.8, paceRatio: 1.4, trendRatio: 2.0, status: "over",
-          exhaustAt: Date.now() + 12 * 3600000,
+          exhaustAt: Date.now() + 30 * 60000,
           projectedAtReset: 140, recentProjected: 200, forecast: 200, forecastBasis: "recent",
           timeProgress: 0.57, quotaProgress: 0.8, sampleMs: 12 * 3600000, samples: 8
         }
@@ -78,8 +86,11 @@ const quotaBase = {
 globalThis.fetch = async (url, opts) => {
   const u = String(url);
   calls.push(u);
+  if (opts && opts.method === "POST") postRequests.push({ url: u, headers: opts.headers || {} });
   let body = { ok: false };
-  if (u.startsWith("/ark-quota/stats")) {
+  if (u.startsWith("/ark-quota/csrf")) {
+    body = { ok: true, token: "test-csrf-token" };
+  } else if (u.startsWith("/ark-quota/stats")) {
     body = { ok: false, code: "should-not-be-called" };
   } else if (u.startsWith("/ark-quota/status")) {
     body = { ok: true, configured: true, refreshMs: 300000, activeAccountId: "personal", accounts, routes, pinnedRoute: "" };
@@ -88,7 +99,8 @@ globalThis.fetch = async (url, opts) => {
       ok: true,
       providers: [
         { id: "ark-coding-plan", name: "火山Coding Plan" },
-        { id: "ark-coding-plan-company", name: "火山Agent Plan" }
+        { id: "ark-coding-plan-company", name: "火山Agent Plan" },
+        unconfiguredProvider
       ],
       claimed: { "ark-coding-plan-company": "company", "ark-coding-plan": "personal" },
       foreignClaimed: [],
@@ -99,7 +111,15 @@ globalThis.fetch = async (url, opts) => {
   } else if (u.startsWith("/ark-quota/credentials")) {
     body = { ok: true, accounts, routes, activeAccountId: "personal", pinnedRoute: "", configured: true, refreshMs: 300000 };
   } else if (u.startsWith("/ark-quota")) {
-    body = { ...quotaBase };
+    const company = u.includes("route=ark-coding-plan-company");
+    body = company
+      ? {
+          ...quotaBase,
+          routes: quotaRoutes(),
+          accountId: "company",
+          quota: quotaBase.quota.map((q) => ({ ...q, percentUsed: q.level === "monthly" ? 88 : q.percentUsed }))
+        }
+      : { ...quotaBase, routes: quotaRoutes() };
   }
   return { json: async () => body, status: 200, ok: true };
 };
@@ -201,6 +221,30 @@ assert(wide.includes("Coding Plan"), "底部信息行有套餐徽章");
 assert(wide.includes("含奖励额度"), "hasReward 时显示含奖励额度");
 assert(wide.includes("分钟前更新") || wide.includes("刚刚更新"), "显示更新时间");
 
+// 两个提供方时是前景卡 + 一张背卡；只有前景卡承载额度内容。
+const deck = wideEl.querySelector(".arkq-deck");
+assert(!!deck && deck.getAttribute("data-arkq-deck-count") === "2", "多个提供方渲染为卡片组");
+assert(deck && deck.querySelectorAll(".arkq-deck-front").length === 1, "卡片组只有一张前景卡");
+assert(deck && deck.querySelectorAll(".arkq-deck-back").length === 1, "两个提供方时叠放一张背卡");
+assert(deck && deck.querySelector(".arkq-deck-front [data-arkq-route]"), "前景卡标注当前额度查看路由");
+assert(deck && deck.querySelector(".arkq-deck-back")?.getAttribute("aria-hidden") === "true", "背卡对辅助技术隐藏");
+assert((document.head.querySelector("#dsh-ark-quota-styles")?.textContent || "").includes("dsh-ark-quota-card-in"), "卡片组注入前后切牌动画");
+assert((document.head.querySelector("#dsh-ark-quota-styles")?.textContent || "").includes("transition: transform"), "背卡切换有位移动画");
+assert((document.head.querySelector("#dsh-ark-quota-styles")?.textContent || "").includes("prefers-reduced-motion"), "卡片动画遵守 reduced-motion");
+const urgentViewButton = [...wideEl.querySelectorAll("button")].find((b) => b.textContent.includes("查看「"));
+assert(!!urgentViewButton && urgentViewButton.title.includes("不会更改当前会话模型"), "告急建议只切换额度查看目标");
+
+// 4 个提供方时仍只渲染两张背卡，并把其余数量汇总为提示，避免卡组把版面撑高。
+manyRoutes = true;
+const many = document.createElement("div");
+document.body.appendChild(many);
+const manyRoot = createRoot(many);
+manyRoot.render(React.createElement(widgetReg.Component, { wide: true }));
+await wait(300);
+assert(many.querySelectorAll(".arkq-deck-back").length === 2, "多提供方卡组最多叠放两张背卡");
+assert(many.textContent.includes("另有 1 个提供方"), "超出背卡上限时显示其余提供方数量");
+manyRoutes = false;
+
 // 99.9% 不得显示成 100%
 assert(!wide.includes("100%"), "99.9% 没有被四舍五入成 100%");
 assert(wide.includes("99.9%"), "99.9% 保留一位小数显示");
@@ -230,6 +274,9 @@ assert(!opts.some((t) => t.includes("自动跟随当前模型")), "首项不再�
   await setProvider("ark-coding-plan-company");
   assert(quotaUrls().some((u) => u.includes("route=ark-coding-plan-company")),
     "provider=ark-coding-plan-company → 跟随到该路由");
+  const companyFront = wideEl.querySelector('.arkq-deck-front [data-arkq-route="ark-coding-plan-company"]');
+  assert(!!companyFront, "新额度响应到达后前景卡切到 company 路由");
+  assert(companyFront && companyFront.textContent.includes("88%"), "前景卡的额度与 company 路由响应一致");
   // 下拉应处于自动模式（select 值为 __auto__）
   const rtSelect = wideEl.querySelectorAll("select")[0];
   assert(rtSelect && rtSelect.value === "__auto__", "自动模式下下拉值为 __auto__");
@@ -265,6 +312,7 @@ assert(!opts.some((t) => t.includes("自动跟随当前模型")), "首项不再�
   freshSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   await wait(200);
   assert(calls.some((u) => u.startsWith("/ark-quota/routes")), "手动固定 POST /ark-quota/routes");
+  assert(postRequests.some((r) => r.url.startsWith("/ark-quota/routes") && r.headers["x-ark-quota-csrf"] === "test-csrf-token"), "写路由请求携带 CSRF token");
   const fixedSelect = wideEl.querySelectorAll("select")[0];
   assert(fixedSelect.value === "ark-coding-plan", "手动固定后下拉值为该路由");
   // provider 再切到 company，也不应出现新的 company 路由请求（固定在 plan）
@@ -327,6 +375,15 @@ assert(!settings.includes("解绑"), "设置页不出现「解绑」措辞");
   await wait(150);
   const btns2 = [...settingsEl.querySelectorAll("button")].map((b) => b.textContent);
   assert(btns2.indexOf("清除配置") === btns2.indexOf("保存") + 1, "切换路由后「清除配置」仍紧挨保存");
+  // 未配置但已出现在 llm 清单的路由：首次配置表单必须正常渲染，不能
+  // 因未声明的 currentBound 变量抛 ReferenceError。
+  const unconfigured = [...routeSelect.querySelectorAll("option")].find((o) => o.value === "ark-unconfigured");
+  assert(!!unconfigured, "设置页包含未配置的方舟路由");
+  routeSelect.value = "ark-unconfigured";
+  routeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  await wait(100);
+  assert(settingsEl.textContent.includes("未配置"), "首次配置未绑定路由时显示未配置状态");
+  assert(settingsEl.textContent.includes("填写该提供方的 AK/SK"), "未配置路由仍显示首次配置表单");
 }
 // 侧栏自动模式不再显示 ⛓ 图标。
 assert(!wide.includes("⛓"), "侧栏自动模式无 ⛓ 图标");

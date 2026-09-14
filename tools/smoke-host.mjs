@@ -29,7 +29,8 @@ import {
   burnRate,
   burnRatesFor,
   ACCOUNT_ID_RE,
-  LEGACY_ACCOUNT_ID
+  LEGACY_ACCOUNT_ID,
+  isLoopbackHost
 } from "../lib/index.js";
 
 let failed = 0;
@@ -192,7 +193,7 @@ function multiConfig(extra = {}) {
   };
 }
 
-async function call(ctx, path, method, url, json, headers) {
+async function callRaw(ctx, path, method, url, json, headers) {
   const route = ctx.__routes.get(path);
   if (!route) return { res: { statusCode: 404 }, json: null, __missing: true };
   const req = makeReq(method, url ?? path, json, headers);
@@ -200,6 +201,15 @@ async function call(ctx, path, method, url, json, headers) {
   await route.handler(req, res);
   const parsed = res.body ? JSON.parse(res.body) : null;
   return { res, json: parsed };
+}
+
+async function call(ctx, path, method, url, json, headers) {
+  const requestHeaders = { ...(headers || {}) };
+  if (method === "POST" && !Object.prototype.hasOwnProperty.call(requestHeaders, "x-ark-quota-csrf")) {
+    const token = await callRaw(ctx, "/ark-quota/csrf", "GET", "/ark-quota/csrf");
+    if (token.json?.token) requestHeaders["x-ark-quota-csrf"] = token.json.token;
+  }
+  return callRaw(ctx, path, method, url, json, requestHeaders);
 }
 
 const codingBody = {
@@ -275,7 +285,7 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
     account: "ghost", accessKeyId: "a", secretAccessKey: "b"
   });
   assert(ghost.res.statusCode === 404, "写入未知账号 → 404");
-  // 新路由首次绑定：自动建凭据组（id 由路由名清洗而来）。
+  // 新路由首次绑定：自动建凭据组（id 由路由名稳定摘要生成）。
   const fresh = mockCtx();
   apply(fresh, { refreshMs: 300000 });
   const first = await call(fresh, "/ark-quota/credentials", "POST", "/ark-quota/credentials",
@@ -299,8 +309,10 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
 
 // --- 路由维度纯函数：accountIdFromRoute / accountForRoute / ensure / detach / 去重 ---
 {
-  assert(accountIdFromRoute("ark-coding-plan") === "r_ark_coding_plan", "accountIdFromRoute：连字符→下划线并加 r_ 前缀");
-  assert(ACCOUNT_ID_RE.test(accountIdFromRoute("a.b-c!")), "accountIdFromRoute：清洗后仍合法");
+  const stableId = accountIdFromRoute("ark-coding-plan");
+  assert(stableId === accountIdFromRoute("ark-coding-plan") && stableId.startsWith("r_"), "accountIdFromRoute：同一路由摘要稳定");
+  assert(accountIdFromRoute("ark-prod") !== accountIdFromRoute("ark_prod"), "accountIdFromRoute：不同路由不会因清洗而碰撞");
+  assert(ACCOUNT_ID_RE.test(accountIdFromRoute("a.b-c!")), "accountIdFromRoute：稳定摘要仍合法");
   const accs = migrateAccounts(multiConfig());
   assert(accountForRoute(accs, "ark-coding-plan")?.id === "personal", "accountForRoute：路由反查到凭据组");
   assert(accountForRoute(accs, "nope") === null, "accountForRoute：未知路由返回 null");
@@ -308,8 +320,14 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
   const existed = ensureRouteAccount(accs, "ark-coding-plan");
   assert(existed.accountId === "personal" && existed.accounts === accs, "ensureRouteAccount：已归属路由不重建");
   const ensured = ensureRouteAccount(accs, "brand-new-route");
-  assert(ensured.accountId === "r_brand_new_route" && ensured.accounts.length === accs.length + 1, "ensureRouteAccount：新路由建新组");
+  assert(ensured.accountId === accountIdFromRoute("brand-new-route") && ensured.accounts.length === accs.length + 1, "ensureRouteAccount：新路由建新组");
   assert(ensured.accounts.at(-1).providers[0] === "brand-new-route", "ensureRouteAccount：新组挂着路由");
+  const collisionId = accountIdFromRoute("collision-route");
+  const collision = ensureRouteAccount([
+    { id: collisionId, providers: [], accessKeyId: "old-ak", secretAccessKey: "old-sk" }
+  ], "collision-route");
+  assert(collision.accounts.length === 2 && collision.accountId !== collisionId, "ensureRouteAccount：摘要 id 被占用时生成独立后缀组");
+  assert(collision.accounts[0].providers.length === 0 && collision.accounts[1].providers[0] === "collision-route", "ensureRouteAccount：id 碰撞不串到旧账号");
   // detachRoute：解绑后空且无密钥的组被清掉
   const withRoute = ensureRouteAccount([], "lonely-route");
   const detached = detachRoute(withRoute.accounts, "lonely-route");
@@ -823,7 +841,7 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
   const gone = await call(ctx, "/ark-quota/stats", "GET", "/ark-quota/stats");
   assert(gone.__missing === true, "调用 /ark-quota/stats 找不到 handler（功能已下线）");
   // 其余路由仍在
-  for (const p of ["/ark-quota", "/ark-quota/status", "/ark-quota/providers", "/ark-quota/credentials", "/ark-quota/routes", "/ark-quota/settings"]) {
+  for (const p of ["/ark-quota", "/ark-quota/csrf", "/ark-quota/status", "/ark-quota/providers", "/ark-quota/credentials", "/ark-quota/routes", "/ark-quota/settings"]) {
     assert(ctx.__routes.has(p), `路由仍注册：${p}`);
   }
   assert(!ctx.__routes.has("/ark-quota/accounts"), "/ark-quota/accounts 已下线");
@@ -858,12 +876,26 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
   assert(isSameOriginRequest({ headers: { origin: "http://127.0.0.1:3080", host: "127.0.0.1:3080" } }) === true,
     "旧浏览器兜底：Origin 与 Host 一致 → 放行");
   assert(isSameOriginRequest({ headers: { origin: "not a url" } }) === false, "Origin 非法 URL → 拒绝");
+  assert(isLoopbackHost({ headers: { host: "127.0.0.1:3080" } }) === true, "loopback Host：IPv4 放行");
+  assert(isLoopbackHost({ headers: { host: "[::1]:3080" } }) === true, "loopback Host：IPv6 放行");
+  assert(isLoopbackHost({ headers: { host: "evil.example:3080" } }) === false, "loopback Host：外部域名拒绝");
 
   // 路由级：三个会写配置的 POST 都拦
   const ctx = mockCtx();
   apply(ctx, multiConfig());
+  const token = await call(ctx, "/ark-quota/csrf", "GET", "/ark-quota/csrf");
+  assert(token.res.statusCode === 200 && typeof token.json.token === "string" && token.json.token.length > 20,
+    "GET /csrf 返回随机 capability token");
+  const tokenHead = await call(ctx, "/ark-quota/csrf", "HEAD", "/ark-quota/csrf");
+  assert(tokenHead.res.statusCode === 200 && tokenHead.res.body === "", "HEAD /csrf 无响应体");
   const xsite = { "sec-fetch-site": "cross-site" };
   const same = { "sec-fetch-site": "same-origin" };
+  const noToken = await callRaw(ctx, "/ark-quota/settings", "POST", "/ark-quota/settings", { refreshMs: 60000 }, same);
+  assert(noToken.res.statusCode === 403 && noToken.json.code === "csrf", "same-origin 但缺 CSRF token → 403");
+  const rebound = await callRaw(ctx, "/ark-quota/settings", "POST", "/ark-quota/settings", { refreshMs: 60000 }, {
+    "sec-fetch-site": "same-origin", host: "evil.example:3080", "x-ark-quota-csrf": token.json.token
+  });
+  assert(rebound.res.statusCode === 403 && rebound.json.code === "invalid-host", "DNS rebinding 外部 Host 即使拿到 token 也被拒");
   const r1 = await call(ctx, "/ark-quota/settings", "POST", "/ark-quota/settings", { refreshMs: 60000 }, xsite);
   assert(r1.res.statusCode === 403 && r1.json.code === "cross-origin", "cross-site POST /settings → 403");
   const r2 = await call(ctx, "/ark-quota/credentials", "POST", "/ark-quota/credentials",
@@ -872,7 +904,7 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
   const r3 = await call(ctx, "/ark-quota/routes", "POST", "/ark-quota/routes",
     { action: "pin", route: "ark-coding-plan" }, xsite);
   assert(r3.res.statusCode === 403 && r3.json.code === "cross-origin", "cross-site POST /routes → 403");
-  // 同源请求不受影响
+  // 同源请求带 token 后不受影响
   const okSettings = await call(ctx, "/ark-quota/settings", "POST", "/ark-quota/settings", { refreshMs: 60000 }, same);
   assert(okSettings.res.statusCode === 200, "same-origin POST /settings 正常 200");
   const okPin = await call(ctx, "/ark-quota/routes", "POST", "/ark-quota/routes",
@@ -944,6 +976,45 @@ assert(ALLOWED_REFRESH_MS.length === 5, "刷新档位共 5 个");
     const results = await pending;
     assert(fetches === 1, "3 个并发冷请求只触发 1 次上游调用（实际 " + fetches + "）");
     assert(results.every((r) => r.json && r.json.ok === true), "3 个并发等待者都拿到了额度数据");
+  } finally {
+    globalThis.fetch = orig;
+  }
+}
+
+// --- 配置变更使旧在途响应失效：不得用旧 AK/SK 回填缓存/快照 ---
+{
+  const orig = globalThis.fetch;
+  let fetches = 0;
+  const seen = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  globalThis.fetch = async (_url, init) => {
+    fetches += 1;
+    const auth = String(init?.headers?.Authorization ?? "");
+    const m = /Credential=([^/ ,]+)/.exec(auth);
+    seen.push(m === null ? "?" : m[1]);
+    if (fetches === 1) await gate;
+    return { status: 200, async text() { return JSON.stringify(codingBody); } };
+  };
+  try {
+    const ctx = mockCtx();
+    apply(ctx, {
+      accessKeyId: "ak-old", secretAccessKey: "sk-old",
+      region: "cn-beijing", version: "2024-01-01", refreshMs: 300000
+    });
+    const pending = call(ctx, "/ark-quota", "GET", "/ark-quota");
+    for (let i = 0; i < 20 && fetches === 0; i++) await new Promise((r) => setTimeout(r, 0));
+    assert(fetches === 1, "配置变更回归：先挂起一条旧凭据请求");
+    const saved = await call(ctx, "/ark-quota/credentials", "POST", "/ark-quota/credentials", {
+      account: "default", accessKeyId: "ak-new", secretAccessKey: "sk-new"
+    });
+    assert(saved.res.statusCode === 200, "配置变更回归：保存新密钥成功");
+    release();
+    const result = await pending;
+    assert(result.res.statusCode === 200 && result.json.ok === true, "旧请求完成后由当前配置重试并返回额度");
+    assert(seen[0] === "ak-old" && seen[1] === "ak-new", "旧在途请求不阻塞新配置请求（签名依次为 old/new）");
+    const cached = await call(ctx, "/ark-quota", "GET", "/ark-quota");
+    assert(cached.res.statusCode === 200 && fetches === 2 && cached.json.accountId === "default", "旧响应未写入缓存，新配置缓存可复用");
   } finally {
     globalThis.fetch = orig;
   }
