@@ -7,12 +7,55 @@
 # from the DSH Settings UI instead (Settings → 方舟额度), which writes them to
 # $DSH_HOME/settings.yaml via the plugin's own /ark-quota/credentials route and
 # hot-applies them — no restart.
+#
+# Multi-account: one AK/SK pair identifies ONE Volcengine account, so the plugin
+# keeps a list. Each entry may declare which `llm` provider routes belong to it
+# (`providers`). This marks the routes that point at that account's Volcengine
+# endpoint: the Settings UI lists them for the account and warns if a linked
+# route is NOT a Volcengine endpoint (e.g. deepseek-official linked by mistake).
+# Leave `providers` empty to track quota only.
+#
+# `id` must match /^[a-z][a-z0-9_]*$/ (it keys the persisted burn-rate
+# snapshots); `label` is the free-form display name and may be Chinese.
 - insert:
     - id: ark-quota
       name: dsh-ark-quota
       config:
-        accessKeyId: ''
-        secretAccessKey: ''
-        region: cn-beijing
-        version: '2024-01-01'
+        accounts:
+          - id: personal
+            label: 个人 Pro
+            accessKeyId: ''
+            secretAccessKey: ''
+            region: cn-beijing
+            version: '2024-01-01'
+            # Provider route ids as registered with the `llm` service
+            # (see Settings → 方舟额度, or GET /ark-quota/providers).
+            providers:
+              - ark-coding-plan
+          - id: company
+            label: 公司 Agent Plan
+            accessKeyId: ''
+            secretAccessKey: ''
+            region: cn-beijing
+            version: '2024-01-01'
+            providers:
+              - ark-coding-plan-company
+        # Which account the sidebar card shows by default; switching accounts
+        # in the card writes this back.
+        activeAccountId: company
         refreshMs: 300000
+
+# --- Single account (legacy shape) -----------------------------------------
+# Still supported and migrated automatically into one account with id
+# `default`: the old top-level keys are read when `accounts` is absent or
+# empty, and are left in place so a downgrade keeps working.
+#
+# - insert:
+#     - id: ark-quota
+#       name: dsh-ark-quota
+#       config:
+#         accessKeyId: ''
+#         secretAccessKey: ''
+#         region: cn-beijing
+#         version: '2024-01-01'
+#         refreshMs: 300000
