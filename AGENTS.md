@@ -31,9 +31,9 @@ hand-written bundle consumed by the DSH client module loader.
 ## Conventions — host (`lib/index.js`)
 
 - Register everything through `ctx.effect(fn, label)` (fiber-scoped teardown).
-- The settings namespace (`ctx.settings.register(ARK_QUOTA_NS, SettingsSchema, { base })`) is the live-maintenance seam: read the **effective** config from the scope (`scope.get()`), never the static `config`; the `scope.watch` handler must drop the cache so an AK/SK change applies without restart.
+- The settings seam (DSH 0.2.0-rc.1 实测): `ctx.settings`（SettingsForms）**没有** `register()`——插件的命名空间就是它自己的 profile entry。apply 内的 scope shim 把真实 API 包成 `{ get, watch, update }`：`get()` 读 apply 的 config（schemastery volatile refs），`watch` 挂 `ctx.on("loader/volatile-update")`（loader 热应用 ref 后对本 fiber emit），`update(patch)` 走 `ctx.settings.update(ctx.loader.locate(), patch)`（合并进 entry 用户层并热应用）。**不要**改回 `ctx.settings.register`——当前已发布 DSH 没有该 API，宿主半区会以 `TypeError: ctx.settings.register is not a function` 拒绝激活。
 - Sign every upstream call with `lib/signature.js` (`buildSignedRequest`) against `open.volcengineapi.com`; probe Coding Plan first (`GetCodingPlanUsage`), fall back to Agent Plan (`GetAFPUsage`) when coding is not subscribed.
-- Keep AK/SK off every wire surface: declare them `role("secret")` in `Config`/`SettingsSchema`, never log full values, never echo them in responses.
+- Keep AK/SK off every wire surface: declare them `role("secret")` in `Config`, never log full values, never echo them in responses.
 - Validate config with `Config['~standard'].validate(config)` (schemastery implements Standard Schema).
 - The route must never echo credentials; accept only fixed-shape inputs (no user-controlled URLs — no SSRF surface).
 - Proxy failures map to honest statuses: `unauthorized`/`missing-auth` → 401, `network` → 504, else 502; HEAD returns no body.

@@ -110,9 +110,21 @@ function mockCtx(opts = {}) {
       };
     }
   };
+  // 设置事件总线：插件经 ctx.on("loader/volatile-update", cb) 监听自己的
+  // entry 配置热应用；mock 在 settings.update 时 emit，模拟 loader 行为。
+  const listeners = new Map();
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     effect(fn) { fn(); },
+    on(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(cb);
+      return () => listeners.get(event)?.delete(cb);
+    },
+    emit(event, ...args) {
+      for (const cb of listeners.get(event) ?? []) cb(...args);
+    },
+    loader: { locate: () => "ark-quota" },
     webServer: {
       register(route) {
         routes.set(route.path, route);
@@ -120,20 +132,12 @@ function mockCtx(opts = {}) {
       }
     },
     settings: {
-      register(_ns, _schema, { base }) {
-        let current = { ...base };
-        const watchers = [];
-        return {
-          get: () => current,
-          watch(cb) {
-            watchers.push(cb);
-            return () => {};
-          },
-          async update(patch) {
-            current = { ...current, ...patch };
-            for (const w of watchers) w();
-          }
-        };
+      // 真机形状：settings.update(ns, patch) 把补丁合并进 entry 用户层并热应用。
+      // 热应用后的读端是 apply() 的 config（真机是 loader 原位更新的 volatile
+      // refs；harness 传普通对象，由插件把补丁显式回写），这里只负责 emit
+      // 触发缓存失效。
+      async update(_ns, _patch) {
+        ctx.emit("loader/volatile-update", []);
       },
       // 别的插件的命名空间：/ark-quota/providers 读它拿 baseURL 判定方舟路由。
       // opts.otherSettings === false 时模拟"读不到"，验证名称特征兜底路径。
