@@ -1,0 +1,12 @@
+# dsh.bundle patch —— 插件管理器（`dsh plugin add` / GUI 插件安装）安装本包时
+# 自动应用：依赖写入 profile，本 insert 行挂载宿主半区（ark-quota 路由 +
+# settings namespace + storage 快照域）。
+#
+# 密钥（accessKeyId / secretAccessKey）**留空**：安装后在 DSH 设置页
+# 「方舟额度」分区填写，经插件自身的 /ark-quota/credentials 路由写入本
+# entry 的用户层并热应用，无需重启。若同时手动在 profile 的 cordis.patch.yml
+# 里 insert 了同名 id（ark-quota），升级到 bundle 安装前请先删掉手写行，
+# 否则 duplicate loader entry id。
+- insert:
+    - id: ark-quota
+      name: dsh-ark-quota

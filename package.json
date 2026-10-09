@@ -13,6 +13,7 @@
   "files": [
     "lib",
     "tools",
+    "dsh.bundle.yml",
     "cordis.patch.yml.example",
     "README.md",
     "README.zh-CN.md",
@@ -36,6 +37,9 @@
         "@deepseek-ai/dsh-client-runtime"
       ],
       "platform": "web"
+    },
+    "bundle": {
+      "patch": "./dsh.bundle.yml"
     }
   },
   "dependencies": {

@@ -26,3 +26,4 @@ Thumbs.db
 
 # AI agent scratch / throwaway test harnesses
 scratch-test/
+.pnpm-store/
