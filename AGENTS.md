@@ -18,8 +18,10 @@ hand-written bundle consumed by the DSH client module loader.
 | `lib/client.js` | Browser half: shipped client bundle in `window.__ModuleLoader__.load({ id, factory })` format. **No build step — edit this file directly.** |
 | `tools/check.mjs` | Standalone Node CLI (no DSH imports): signs one `GetCodingPlanUsage`/`GetAFPUsage` request with AK/SK and prints the quota — for verifying keys. |
 | `tools/patch-settings-icon.mjs` | Idempotent shell patch (run manually, not on load): gives the 方舟额度 settings-nav tab its own icon. DSH's settings nav icon is hardcoded by section id in `dsh-client-ui-settings-general` (unknown ids → gear) with no plugin hook, so the 火山方舟 mark is injected as one extra `navIcon("ark-quota")` branch in that shell's client bundle. Re-run after any DSH upgrade resets `node_modules`; `--revert` restores from the `.ark-orig` backup. |
-| `cordis.patch.yml.example` | Example profile entry; AK/SK may be left empty and filled from the DSH Settings UI. |
-| `README.md` / `README.zh-CN.md` | User docs — keep bilingual in sync. |
+| `dsh.bundle.yml` | Bundle patch applied automatically by the plugin manager on install (`- insert: - id: ark-quota, name: dsh-ark-quota`, keys left empty for the settings UI). |
+| `cordis.patch.yml.example` | Example profile entry for manual (non-bundle) installs; AK/SK may be left empty and filled from the DSH Settings UI. |
+| `README.md` | User docs — 中文默认；`README.en.md` 为英文镜像，两者顶部互链。README 只留简介 + 安装 + 文档链接，细节一律进 `docs/`。 |
+| `docs/` | 中文细节文档：`install.md`（安装/升级/卸载/DSH 版本兼容/常见报错）、`settings.md`（配置与多账号）、`widget.md`（组件与预测口径）、`api.md`（路由参考）、`architecture.md`（架构与安全）；`docs/images/` 存 README 截图。README 修改涉及细节时同步进对应 docs 页。 |
 
 ## Load mechanics (know before editing)
 
@@ -31,7 +33,7 @@ hand-written bundle consumed by the DSH client module loader.
 ## Conventions — host (`lib/index.js`)
 
 - Register everything through `ctx.effect(fn, label)` (fiber-scoped teardown).
-- The settings seam (DSH 0.2.0-rc.1 实测): `ctx.settings`（SettingsForms）**没有** `register()`——插件的命名空间就是它自己的 profile entry。apply 内的 scope shim 把真实 API 包成 `{ get, watch, update }`：`get()` 读 apply 的 config（schemastery volatile refs），`watch` 挂 `ctx.on("loader/volatile-update")`（loader 热应用 ref 后对本 fiber emit），`update(patch)` 走 `ctx.settings.update(ctx.loader.locate(), patch)`（合并进 entry 用户层并热应用）。**不要**改回 `ctx.settings.register`——当前已发布 DSH 没有该 API，宿主半区会以 `TypeError: ctx.settings.register is not a function` 拒绝激活。
+- The settings seam (DSH 0.2.0-rc.1 实测): `ctx.settings`（SettingsForms）**没有** `register()`——插件的命名空间就是它自己的 profile entry。apply 内的 scope shim 把真实 API 包成 `{ get, watch, update }`：`get()` 读 apply 的 config（schemastery volatile refs），`watch` 挂 `ctx.on("loader/volatile-update")`（loader 热应用 ref 后对本 fiber emit），`update(patch)` 走 `ctx.settings.update(ctx.fiber.entry?.options.id, patch)`（ns = entry 本地 id，合并进 entry 用户层并热应用；`loader.locate()` 返回 include 前缀组合 id，不能直接当 ns）。**不要**改回 `ctx.settings.register`——当前已发布 DSH 没有该 API，宿主半区会以 `TypeError: ctx.settings.register is not a function` 拒绝激活。
 - Sign every upstream call with `lib/signature.js` (`buildSignedRequest`) against `open.volcengineapi.com`; probe Coding Plan first (`GetCodingPlanUsage`), fall back to Agent Plan (`GetAFPUsage`) when coding is not subscribed.
 - Keep AK/SK off every wire surface: declare them `role("secret")` in `Config`, never log full values, never echo them in responses.
 - Validate config with `Config['~standard'].validate(config)` (schemastery implements Standard Schema).

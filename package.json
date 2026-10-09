@@ -13,10 +13,11 @@
   "files": [
     "lib",
     "tools",
+    "docs",
     "dsh.bundle.yml",
     "cordis.patch.yml.example",
     "README.md",
-    "README.zh-CN.md",
+    "README.en.md",
     "LICENSE"
   ],
   "engines": {
